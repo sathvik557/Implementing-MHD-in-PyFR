@@ -2,14 +2,15 @@ from pyfr.solvers.baseadvec import BaseAdvectionElements
 
 
 class BaseMHDElements:
-    # 2.5D: always three velocity and three B components, even on a 2D mesh
+    # 2.5D: always three velocity and three B components, even on a 2D mesh.
+    # Ninth variable: the divergence-cleaning scalar phi (GLM / HDC).
     @staticmethod
     def privars(ndims, cfg):
-        return ['rho', 'u', 'v', 'w', 'Bx', 'By', 'Bz', 'p']
+        return ['rho', 'u', 'v', 'w', 'Bx', 'By', 'Bz', 'p', 'phi']
 
     @staticmethod
     def convars(ndims, cfg):
-        return ['rho', 'rhou', 'rhov', 'rhow', 'Bx', 'By', 'Bz', 'E']
+        return ['rho', 'rhou', 'rhov', 'rhow', 'Bx', 'By', 'Bz', 'E', 'phi']
 
     dualcoeffs = convars
 
@@ -19,57 +20,55 @@ class BaseMHDElements:
             'density': ['rho'],
             'velocity': ['u', 'v', 'w'],
             'magnetic-field': ['Bx', 'By', 'Bz'],
-            'pressure': ['p']
+            'pressure': ['p'],
+            'divergence-cleaning': ['phi']
         }
 
     @staticmethod
     def pri_to_con(pris, cfg):
-        rho, p = pris[0], pris[-1]
+        rho, p, phi = pris[0], pris[7], pris[8]
         vs, Bs = pris[1:4], pris[4:7]
 
         gamma = cfg.getfloat('constants', 'gamma')
-        mu0 = cfg.getfloat('constants', 'mu0', 1.0)
 
         rhovs = [rho*v for v in vs]
         E = (p/(gamma - 1) + 0.5*rho*sum(v*v for v in vs)
-             + sum(b*b for b in Bs)/(2*mu0))
+             + 0.5*sum(b*b for b in Bs))
 
-        return [rho, *rhovs, *Bs, E]
+        return [rho, *rhovs, *Bs, E, phi]
 
     @staticmethod
     def con_to_pri(cons, cfg):
-        rho, E = cons[0], cons[-1]
+        rho, E, phi = cons[0], cons[7], cons[8]
         rhovs, Bs = cons[1:4], cons[4:7]
 
         gamma = cfg.getfloat('constants', 'gamma')
-        mu0 = cfg.getfloat('constants', 'mu0', 1.0)
 
         vs = [rhov/rho for rhov in rhovs]
         p = (gamma - 1)*(E - 0.5*rho*sum(v*v for v in vs)
-                         - sum(b*b for b in Bs)/(2*mu0))
+                         - 0.5*sum(b*b for b in Bs))
 
-        return [rho, *vs, *Bs, p]
+        return [rho, *vs, *Bs, p, phi]
 
     @staticmethod
     def diff_con_to_pri(cons, diff_cons, cfg):
         rho = cons[0]
         rhovs, Bs = cons[1:4], cons[4:7]
-        diff_rho, diff_E = diff_cons[0], diff_cons[-1]
+        diff_rho, diff_E, diff_phi = diff_cons[0], diff_cons[7], diff_cons[8]
         diff_rhovs, diff_Bs = diff_cons[1:4], diff_cons[4:7]
 
         gamma = cfg.getfloat('constants', 'gamma')
-        mu0 = cfg.getfloat('constants', 'mu0', 1.0)
 
         vs = [rhov/rho for rhov in rhovs]
         diff_vs = [(drv - v*diff_rho)/rho for drv, v in zip(diff_rhovs, vs)]
 
-        # Kinetic part is the same as Euler; magnetic part is B.dB/mu0
+        # Kinetic part is the same as Euler; magnetic part is B.dB
         diff_p = diff_E - 0.5*(sum(v*drv for v, drv in zip(vs, diff_rhovs)) +
                                sum(rv*dv for rv, dv in zip(rhovs, diff_vs)))
-        diff_p -= sum(b*db for b, db in zip(Bs, diff_Bs))/mu0
+        diff_p -= sum(b*db for b, db in zip(Bs, diff_Bs))
         diff_p *= gamma - 1
 
-        return [diff_rho, *diff_vs, *diff_Bs, diff_p]
+        return [diff_rho, *diff_vs, *diff_Bs, diff_p, diff_phi]
 
     @staticmethod
     def validate_formulation(ctrl):
